@@ -1,0 +1,293 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+install.packages("readr")
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("ggplot2")
+install.packages("ggpubr")
+install.packages("gtsummary")
+
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+library(gtsummary)
+
+#Investigating raw dataset
+length(NHATS_Round_11_SP_File)
+length(NHATS_Round_11_Tab_Act_File)
+
+
+#Cleaning dataset
+
+# Import first data set containing Survey responses
+dfSurvey <- NHATS_Round_11_SP_File %>% 
+  select (spid, ss11heringaid, wb11offelche1 , cg11ratememry) 
+
+#Remove Invalid responses
+dfSurvey[dfSurvey == -1 | dfSurvey == -9 | dfSurvey == -8 | dfSurvey == 7] = NA;
+
+
+# Import second data set containing test measurements
+dfTests <- NHATS_Round_11_Tab_Act_File %>% 
+  select (spid, hb11dbpta, cb11onbacc)
+
+
+#Remove negative measurements (missing and inapplicable responses)
+dfTests[dfTests == -9 | dfTests == -1] = NA;
+
+
+# Merge the two data set together and rename variables
+df <- merge(dfSurvey, dfTests, by="spid") %>% 
+  rename("ID" = "spid") %>% 
+  rename("HearingAids" = "ss11heringaid") %>% 
+  rename("PureToneAverage" = "hb11dbpta") %>% 
+  rename("Cheerful" = "wb11offelche1") %>% 
+  rename("MemorySurvey" = "cg11ratememry") %>% 
+  rename("MemoryScores" = "cb11onbacc") %>% 
+  
+# Create a new variable consisting of three groups of hearing loss severity
+  mutate("Hearing Impairment" = case_when(PureToneAverage > 40 ~ "Moderate/Severe",
+                               PureToneAverage >= 26 & PureToneAverage <= 40 ~ "Mild",
+                               PureToneAverage < 25 ~ "Normal"))
+
+# Changing variable types
+labelled::unlabelled(df$HearingAid)
+
+df$HearingAids <- as.factor(df$HearingAid)
+df$PureToneAverage <- as.double(df$PureToneAverage)
+df$Cheerful <- as.factor(df$Cheerful)
+df$MemorySurvey <- as.factor(df$MemorySurvey)
+df$MemoryScores <- as.double(df$MemoryScores)
+
+# Ordering the levels of the hearing impairment groups
+df$`Hearing Impairment` <-  factor ((df$`Hearing Impairment`),
+                            levels = c("Normal",
+                                     "Mild",
+                                     "Moderate/Severe"))
+
+df <- na.omit(df)
+# Create a table summary count for each group
+tbl_summary(df,
+            by = `Hearing Impairment`,
+            percent = "column")
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+
+Hearing Impairment group data
+```{r}
+
+df_HearingImpairment <- df %>% 
+  select(`Hearing Impairment`, HearingAids) %>% 
+  group_by(`Hearing Impairment`) %>% 
+  filter(HearingAids != 0)
+
+#Create a summary table containing counts for each group
+tbl_summary(df_HearingImpairment,
+            by = `Hearing Impairment`,
+            percent = "row")
+
+#Visualization            
+# Create pie chart (Hearing Severity Percentage)
+df_HearingImpairment_Pie <- df_HearingImpairment %>% 
+  count() %>%
+  ungroup() %>% 
+  mutate(Percent = paste0(round(((n/sum(n)) *100), 0), '%'))
+
+df_HearingImpairment_Pie <- ggpubr::ggpie(
+  data = df_HearingImpairment_Pie, x = "n", label = "Percent", color = "white",
+  fill = "Hearing Impairment",
+  lab.pos = "in",
+  lab.font = "white",
+  orientation = "horizontal", lab.adjust = 100) +
+  ggsci::scale_fill_jama() +
+  labs(title = "Percentage of Hearing loss severity groups")
+
+df_HearingImpairment_Pie
+
+# Create bar chart (Hearing Aids count at different Hearing Severity)
+df_HearingImpairment_Bar <- df_HearingImpairment %>% 
+  group_by(`Hearing Impairment`, HearingAids) %>% 
+  ggplot(aes(x = `Hearing Impairment`, fill = HearingAids)) +
+    geom_bar(position = "dodge") +
+    scale_fill_brewer(palette = "Dark2") +
+    labs(title = "Hearing Aids use at different Hearing Loss Severity")
+
+df_HearingImpairment_Bar 
+```
+
+Cheerfulness Survey analysis with Hearing Impairment and Hearing Aids variables
+```{r}
+
+df_Cheerfulness_HearingImpairment <- df %>% 
+  select (Cheerful, `Hearing Impairment`) 
+
+ # Bar graph for Memory vs Hearing Impairment
+ df_Cheerfulness_HearingImpairment %>%  
+   count(Cheerful, `Hearing Impairment`) %>% 
+   group_by(`Hearing Impairment`) %>% 
+   mutate(percentage = round((n/sum(n) * 100), 0)) %>%
+   
+  ggplot(aes(x = Cheerful, y = percentage, fill = `Cheerful`)) + 
+   geom_bar(stat="identity", position = 'dodge') +
+    scale_fill_brewer(palette = "Dark2") +
+    facet_wrap(~ `Hearing Impairment`) +
+   geom_text(
+     aes(label = percentage), 
+     vjust = -0.2, position = position_dodge(1),
+     colour = "black", size = 4) +
+     labs(title = "Cheerful survey responses of hearing loss severity groups") +
+     scale_fill_discrete(labels=c('1 - Everyday (7 days a week)',
+                                  '2 - Most days (5-6 days a week)',
+                                  '3 - Some days (2-4 days a weeek)',
+                                  '4 - Rarely (Once a week or less)',
+                                  '5 - Never'))
+ 
+
+# Chi-Square analysis for CheerfulResponses and HearingImpairment variables
+df_Cheerfulness_HearingImpairment %>% 
+  table() %>% 
+  chisq.test() 
+
+
+# Bar graph for Cheerfulness vs Hearing Aids(Moderate/Severe cases)
+ df_Cheerfulness_HearingAids <- df %>% 
+   select (Cheerful, `Hearing Impairment`, HearingAids) %>%
+   filter(`Hearing Impairment` == "Moderate/Severe")
+   
+ ggplot(df_Cheerfulness_HearingAids, aes(x = `Cheerful`, fill = `HearingAids`)) +
+    geom_bar(position = "dodge") +
+    scale_fill_brewer(palette = "Dark2") +
+    labs(title = "Cheerfulness responses of Moderate/Severe cases with(1) vs no(2) Hearing Aids")
+ 
+# Chi-Square analysis for CheerfulResponses and HearingAids variables
+ df_Cheerfulness_HearingAids_Analysis <- df_Cheerfulness_HearingAids %>% 
+ select(Cheerful, HearingAids) %>% 
+   table()
+ 
+chisq.test(df_Cheerfulness_HearingAids_Analysis)
+```
+
+Memory Survey analysis with Hearing Impairment and Hearing Aids variables
+```{r}
+
+df_MemorySurvey_HearingImpairment <- df %>% 
+  select (MemorySurvey, `Hearing Impairment`) 
+  
+# Create Percentage Bar graph for Memory vs Hearing Impairment
+df_MemorySurvey_HearingImpairment %>% 
+  count(MemorySurvey, `Hearing Impairment`) %>% 
+  group_by(`Hearing Impairment`) %>% 
+  mutate(percentage = round((n/sum(n) * 100), 0)) %>%
+  
+  ggplot(aes(x = MemorySurvey, y = percentage, fill = `MemorySurvey`)) + 
+   geom_bar(stat="identity", position = 'dodge') +
+    scale_fill_brewer(palette = "Dark2") +
+    facet_wrap(~ `Hearing Impairment`) +
+   geom_text(
+     aes(label = percentage), 
+     vjust = -0.2, position = position_dodge(1),
+     colour = "black", size = 4) +
+     labs(title = "Memory survey responses of hearing loss severity groups") +
+     scale_fill_discrete(labels=c('1 - Excellent',
+                                  '2 - Very Good',
+                                  '3 - Good',
+                                  '4 - Fair',
+                                  '5 - Poor'))
+  
+# Chi-Square analysis for MemorySurvey and HearingImpairment variables
+df_MemorySurvey_HearingImpairment %>% 
+  table() %>% 
+  chisq.test() 
+  
+
+# Bar graph for Memory vs Hearing Aids(Moderate/Severe cases)
+ df_MemorySurvey_HearingAids <- df %>% 
+   select (MemorySurvey, `Hearing Impairment`, HearingAids) %>%
+   filter(`Hearing Impairment` == "Moderate/Severe") 
+   
+ ggplot(df_MemorySurvey_HearingAids, aes(x = `MemorySurvey`, fill = `HearingAids`)) +
+    geom_bar(position = "dodge") +
+    scale_fill_brewer(palette = "Dark2") +
+    labs(title = "Memory responses of Moderate/Severe cases with(1) vs no(2) Hearing Aids")
+
+ # Chi-Square analysis for MemoryResponses and HearingAids variables
+ df_MemorySurvey_HearingAids_Analysis <- df_MemorySurvey_HearingAids %>% 
+ select(MemorySurvey, HearingAids) %>%
+   table()
+ 
+chisq.test(df_MemorySurvey_HearingAids_Analysis )
+```
+
+Memory test score analysis between normal group and moderate/severe hearing loss group
+```{r}
+df_MemoryScores <- df %>% 
+  select (MemoryScores, PureToneAverage, `Hearing Impairment`)
+  
+# Create scatter plot (MemoryScores vs. PureToneAverage)
+df_MemoryScoresvsPureTone <- ggscatter(df_MemoryScores, x="PureToneAverage", y="MemoryScores", 
+                    conf.int = TRUE,
+                    color = "Hearing Impairment", 
+                    pallete = "jco")+
+  geom_smooth(formula = y ~ x, method = "lm", color = "black") +
+  stat_cor(label.x = 65,
+           label.y = 1.75)+
+  labs(title = "Memory Test Scores at different Pure Tone Average")
+
+df_MemoryScoresvsPureTone
+
+
+#Create density plot for density of memory scores between the normal and moderate/severe groups
+df_MemoryScores_HearingImpairment <- df %>%
+  select(`MemoryScores`, `Hearing Impairment`, HearingAids) %>%
+  group_by(`Hearing Impairment`) %>%
+  filter(`Hearing Impairment` == "Moderate/Severe" |
+          `Hearing Impairment` == "Normal")
+
+ggdensity(df_MemoryScores_HearingImpairment, x = "MemoryScores", fill = "Hearing Impairment", 
+          palette = "jco") +
+  labs(title = "Distribution of Memory scores between Normal and Moderate/Severe groups")
+
+
+#Obtain mean and sd scores of the normal and moderate/severe groups
+df_MemoryScores_HearingImpairment %>% 
+  summarise(across(c(`MemoryScores`), list(mean = mean, sd = sd)))
+
+#Perform t-test
+  t.test(data = df_MemoryScores_HearingImpairment, `MemoryScores` ~ `Hearing Impairment`)
+
+  
+#Create density plot for density of memory scores between the hearing aid users and non-users
+ df_MemoryScores_HearingAids <- df %>% 
+   select(MemoryScores, HearingAids, `Hearing Impairment`) %>% 
+   filter(`Hearing Impairment` == "Moderate/Severe") %>% 
+   group_by(HearingAids)
+   
+ ggdensity(df_MemoryScores_HearingAids, x = "MemoryScores", fill = "HearingAids", 
+           palette = "jco") +
+  labs(title = "Distribution of Memory scores between Hearing aid users vs Non-users")
+ 
+#Obtain mean and sd scores of the hearing aid users and non-users
+ df_MemoryScores_HearingAids %>% 
+   summarise(across(c(`MemoryScores`), list(mean = mean, sd = sd)))
+ 
+#Perform t-test
+ t.test(data = df_MemoryScores_HearingAids, `MemoryScores` ~ `HearingAids`)
+
+```
+
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
